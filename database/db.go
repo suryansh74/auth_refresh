@@ -70,11 +70,9 @@ func Connect() {
 func Migrate() {
 	zapLogger := utils.GetLogger()
 
-	err := DB.AutoMigrate(&models.User{})
+	err := DB.AutoMigrate(&models.User{}, &models.RefreshToken{})
 	if err != nil {
-		zapLogger.Fatal("Failed to migrate database",
-			zap.Error(err),
-		)
+		zapLogger.Fatal("Failed to migrate database", zap.Error(err))
 	}
 
 	zapLogger.Info("Database migration completed successfully")

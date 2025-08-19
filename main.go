@@ -12,26 +12,23 @@ import (
 	"github.com/suryansh74/auth_refresh/routes"
 	"github.com/suryansh74/auth_refresh/utils"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 func main() {
+	// Initialize logger FIRST
+	logger := utils.InitLogger()
+	defer utils.Sync()
+
 	// Load environment variables
 	err := godotenv.Load()
 	if err != nil {
-		fmt.Println("Warning: .env file not found")
+		logger.Warn("Warning: .env file not found")
 	}
-
-	// Initialize logger
-	logger := utils.InitLogger()
-	defer utils.Sync()
 
 	logger.Info("Starting Auth Refresh API")
 
 	// Connect to database
 	database.Connect()
-
-	// Run migrations
 	database.Migrate()
 
 	// Create Fiber app
@@ -42,22 +39,8 @@ func main() {
 
 	// Middlewares
 	app.Use(cors.New())
-
-	// Zap logging middleware - Fix the Levels field
 	app.Use(fiberzap.New(fiberzap.Config{
 		Logger: logger,
-		Fields: []string{"latency", "status", "method", "url", "ip"},
-		Messages: []string{
-			"Server error",
-			"Client error",
-			"Success",
-		},
-		Levels: []zapcore.Level{
-			zapcore.ErrorLevel,
-			zapcore.WarnLevel,
-			zapcore.InfoLevel,
-		},
-		SkipURIs: []string{"/"},
 	}))
 
 	// Health check
@@ -70,9 +53,10 @@ func main() {
 	})
 
 	// Setup routes
+	routes.AuthRoutes(app)
 	routes.UserRoutes(app)
 
-	// Get server configuration from environment
+	// Start server
 	serverHost := os.Getenv("SERVER_HOST")
 	serverPort := os.Getenv("SERVER_PORT")
 
@@ -91,10 +75,7 @@ func main() {
 	)
 
 	if err := app.Listen(address); err != nil {
-		logger.Fatal("Failed to start server",
-			zap.Error(err),
-			zap.String("address", address),
-		)
+		logger.Fatal("Failed to start server", zap.Error(err))
 	}
 }
 
@@ -108,6 +89,7 @@ func customErrorHandler(c *fiber.Ctx, err error) error {
 		message = e.Message
 	}
 
+	// Log detailed error info with Zap
 	logger.Error("Request error",
 		zap.Int("status", code),
 		zap.String("method", c.Method()),

@@ -218,3 +218,8 @@ func (uc *UserController) Delete(c *fiber.Ctx) error {
 		"message": "User deleted successfully",
 	})
 }
+
+// Add this missing constructor function
+func NewUserController() *UserController {
+	return &UserController{}
+}
