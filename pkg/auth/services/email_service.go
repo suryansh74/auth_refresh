@@ -61,26 +61,20 @@ func (e *EmailService) SendVerificationEmail(user *models.User, token string) er
 	return e.sendEmail(user.Email, subject, body)
 }
 
-func (e *EmailService) SendPasswordResetEmail(user *models.User, token string) error {
-	// Change this to use your API endpoint
-	cfg := config.LoadConfig()
-	address := cfg.Server.Host + ":" + cfg.Server.Port
-	resetURL := fmt.Sprintf("http://"+address+"/api/v1/auth/reset-password?token=%s&email=%s",
-		token, user.Email)
-
-	subject := "Reset Your Password"
+// Update the SendPasswordResetEmail method in your email service
+func (e *EmailService) SendPasswordResetOTP(user *models.User, otp string) error {
+	subject := "Password Reset OTP"
 	body := fmt.Sprintf(`
-		<h1>Password Reset Request</h1>
-		<p>Hello %s,</p>
-		<p>We received a request to reset your password. Click the link below to reset it:</p>
-		<a href="%s" style="background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
-			Reset Password
-		</a>
-		<p>If the button doesn't work, copy and paste this URL into your browser:</p>
-		<p>%s</p>
-		<p>This link will expire in 1 hour.</p>
-		<p>If you didn't request a password reset, please ignore this email.</p>
-	`, user.Name, resetURL, resetURL)
+        <h1>Password Reset OTP</h1>
+        <p>Hello %s,</p>
+        <p>We received a request to reset your password. Use the OTP below to reset your password:</p>
+        <div style="background-color: #f8f9fa; padding: 20px; margin: 20px 0; text-align: center; border-radius: 5px;">
+            <h2 style="color: #dc3545; font-size: 32px; margin: 0; letter-spacing: 5px;">%s</h2>
+        </div>
+        <p><strong>This OTP will expire in 10 minutes.</strong></p>
+        <p>If you didn't request a password reset, please ignore this email.</p>
+        <p>For security reasons, do not share this OTP with anyone.</p>
+    `, user.Name, otp)
 
 	return e.sendEmail(user.Email, subject, body)
 }

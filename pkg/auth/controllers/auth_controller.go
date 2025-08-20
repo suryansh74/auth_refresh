@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/suryansh74/auth_refresh/pkg/utils"
 	"github.com/suryansh74/auth_refresh/pkg/auth/models"
 	"github.com/suryansh74/auth_refresh/pkg/auth/services"
 	"github.com/suryansh74/auth_refresh/pkg/auth/validation"
 	"github.com/suryansh74/auth_refresh/pkg/config"
+	"github.com/suryansh74/auth_refresh/pkg/utils"
 	"go.uber.org/zap"
 )
 
@@ -17,6 +17,7 @@ type AuthController struct {
 	jwtService      *services.JWTService
 	emailService    *services.EmailService
 	passwordService *services.PasswordService
+	otpService      *services.OTPService // Add this line
 	logger          *zap.Logger
 }
 
@@ -25,6 +26,7 @@ func NewAuthController() *AuthController {
 		jwtService:      services.NewJWTService(),
 		emailService:    services.NewEmailService(),
 		passwordService: services.NewPasswordService(),
+		otpService:      services.NewOTPService(), // Add this line
 		logger:          utils.GetLogger(),
 	}
 }
@@ -357,39 +359,96 @@ func (ac *AuthController) ForgotPassword(c *fiber.Ctx) error {
 		// Don't reveal if email exists
 		return c.JSON(fiber.Map{
 			"success": true,
-			"message": "If the email exists, a password reset link has been sent",
+			"message": "If the email exists, an OTP has been sent to your email address",
 		})
 	}
 
-	// Generate reset token
-	resetToken := ac.jwtService.GenerateRandomToken()
-	resetExpiry := time.Now().Add(1 * time.Hour) // 1 hour
-
-	user.ResetToken = &resetToken
-	user.ResetTokenExpiry = &resetExpiry
-
-	if err := config.DB.Save(&user).Error; err != nil {
-		logger.Error("Failed to save reset token", zap.Error(err))
+	// Generate OTP
+	otp, err := ac.otpService.GenerateOTP()
+	if err != nil {
+		logger.Error("Failed to generate OTP", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{
 			"success": false,
 			"error":   "Failed to process request",
 		})
 	}
 
-	// Send reset email
-	if err := ac.emailService.SendPasswordResetEmail(&user, resetToken); err != nil {
-		logger.Error("Failed to send reset email", zap.Error(err))
+	// Set OTP expiry (10 minutes)
+	otpExpiry := time.Now().Add(10 * time.Minute)
+	user.ResetOTP = &otp
+	user.ResetOTPExpiry = &otpExpiry
+
+	if err := config.DB.Save(&user).Error; err != nil {
+		logger.Error("Failed to save reset OTP", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{
+			"success": false,
+			"error":   "Failed to process request",
+		})
+	}
+
+	// Send OTP email
+	if err := ac.emailService.SendPasswordResetOTP(&user, otp); err != nil {
+		logger.Error("Failed to send reset OTP email", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{
 			"success": false,
 			"error":   "Failed to send reset email",
 		})
 	}
 
-	logger.Info("Password reset requested", zap.String("email", user.Email))
-
+	logger.Info("Password reset OTP sent", zap.String("email", user.Email))
 	return c.JSON(fiber.Map{
 		"success": true,
-		"message": "If the email exists, a password reset link has been sent",
+		"message": "If the email exists, an OTP has been sent to your email address",
+	})
+}
+
+func (ac *AuthController) VerifyOTP(c *fiber.Ctx) error {
+	logger := utils.GetLogger()
+
+	req, err := validation.ValidateVerifyOTP(c)
+	if err != nil {
+		logger.Warn("Verify OTP validation failed", zap.Error(err))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Validation failed",
+			"message": err.Error(),
+		})
+	}
+
+	var user models.User
+	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		logger.Warn("OTP verification attempt with invalid email", zap.String("email", req.Email))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Invalid OTP or email",
+		})
+	}
+
+	// Check if user has an OTP
+	if user.ResetOTP == nil {
+		logger.Warn("OTP verification attempt without OTP", zap.String("email", req.Email))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "No OTP found. Please request a new password reset",
+		})
+	}
+
+	// Validate OTP
+	if !ac.otpService.ValidateOTP(*user.ResetOTP, req.OTP, user.ResetOTPExpiry) {
+		logger.Warn("Invalid OTP attempt", zap.String("email", req.Email))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Invalid or expired OTP",
+		})
+	}
+
+	logger.Info("OTP verified successfully", zap.String("email", user.Email))
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": "OTP verified successfully. You can now reset your password",
+		"data": fiber.Map{
+			"email": user.Email,
+		},
 	})
 }
 
@@ -397,7 +456,7 @@ func (ac *AuthController) ForgotPassword(c *fiber.Ctx) error {
 func (ac *AuthController) ResetPassword(c *fiber.Ctx) error {
 	logger := utils.GetLogger()
 
-	req, err := validation.ValidateResetPassword(c)
+	req, err := validation.ValidateResetPasswordWithOTP(c)
 	if err != nil {
 		logger.Warn("Reset password validation failed", zap.Error(err))
 		return c.Status(400).JSON(fiber.Map{
@@ -408,20 +467,29 @@ func (ac *AuthController) ResetPassword(c *fiber.Ctx) error {
 	}
 
 	var user models.User
-	if err := config.DB.Where("email = ? AND reset_token = ?", req.Email, req.Token).First(&user).Error; err != nil {
-		logger.Warn("Invalid reset token", zap.String("email", req.Email))
+	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		logger.Warn("Password reset attempt with invalid email", zap.String("email", req.Email))
 		return c.Status(400).JSON(fiber.Map{
 			"success": false,
-			"error":   "Invalid reset token",
+			"error":   "Invalid request",
 		})
 	}
 
-	// Check if token is expired
-	if user.ResetTokenExpiry.Before(time.Now()) {
-		logger.Warn("Reset token expired", zap.String("email", req.Email))
+	// Check if user has an OTP
+	if user.ResetOTP == nil {
+		logger.Warn("Password reset attempt without OTP", zap.String("email", req.Email))
 		return c.Status(400).JSON(fiber.Map{
 			"success": false,
-			"error":   "Reset token expired",
+			"error":   "No OTP found. Please request a new password reset",
+		})
+	}
+
+	// Validate OTP again
+	if !ac.otpService.ValidateOTP(*user.ResetOTP, req.OTP, user.ResetOTPExpiry) {
+		logger.Warn("Password reset with invalid OTP", zap.String("email", req.Email))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Invalid or expired OTP",
 		})
 	}
 
@@ -437,8 +505,8 @@ func (ac *AuthController) ResetPassword(c *fiber.Ctx) error {
 
 	// Update user
 	user.Password = hashedPassword
-	user.ResetToken = nil
-	user.ResetTokenExpiry = nil
+	user.ResetOTP = nil
+	user.ResetOTPExpiry = nil
 
 	if err := config.DB.Save(&user).Error; err != nil {
 		logger.Error("Failed to update password", zap.Error(err))
@@ -452,7 +520,6 @@ func (ac *AuthController) ResetPassword(c *fiber.Ctx) error {
 	config.DB.Model(&models.RefreshToken{}).Where("user_id = ?", user.ID).Update("is_revoked", true)
 
 	logger.Info("Password reset successfully", zap.String("email", user.Email))
-
 	return c.JSON(fiber.Map{
 		"success": true,
 		"message": "Password reset successfully",
@@ -603,13 +670,13 @@ func (ac *AuthController) ResetPasswordGet(c *fiber.Ctx) error {
 	}
 
 	// Check if token is expired
-	if user.ResetTokenExpiry.Before(time.Now()) {
-		logger.Warn("Reset token expired", zap.String("email", email))
-		return c.Status(400).JSON(fiber.Map{
-			"success": false,
-			"error":   "Reset token expired",
-		})
-	}
+	// if user.ResetTokenExpiry.Before(time.Now()) {
+	// 	logger.Warn("Reset token expired", zap.String("email", email))
+	// 	return c.Status(400).JSON(fiber.Map{
+	// 		"success": false,
+	// 		"error":   "Reset token expired",
+	// 	})
+	// }
 
 	// Return success response with token validation
 	logger.Info("Reset token validated successfully", zap.String("email", user.Email))

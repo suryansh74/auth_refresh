@@ -167,3 +167,39 @@ func ValidateResetPassword(c *fiber.Ctx) (*ResetPasswordRequest, error) {
 
 	return &req, nil
 }
+
+// In your validation package, add these structs:
+
+type VerifyOTPRequest struct {
+	Email string `json:"email" validate:"required,email"`
+	OTP   string `json:"otp" validate:"required,len=6,numeric"`
+}
+
+type ResetPasswordWithOTPRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	OTP      string `json:"otp" validate:"required,len=6,numeric"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+// Add validation functions
+func ValidateVerifyOTP(c *fiber.Ctx) (*VerifyOTPRequest, error) {
+	req := new(VerifyOTPRequest)
+	if err := c.BodyParser(req); err != nil {
+		return nil, err
+	}
+	if err := validator.New().Struct(req); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+func ValidateResetPasswordWithOTP(c *fiber.Ctx) (*ResetPasswordWithOTPRequest, error) {
+	req := new(ResetPasswordWithOTPRequest)
+	if err := c.BodyParser(req); err != nil {
+		return nil, err
+	}
+	if err := validator.New().Struct(req); err != nil {
+		return nil, err
+	}
+	return req, nil
+}

@@ -14,8 +14,10 @@ type User struct {
 	IsEmailVerified   bool       `json:"is_email_verified" gorm:"default:false"`
 	EmailVerifyToken  *string    `json:"-" gorm:"type:varchar(255)"`
 	EmailVerifyExpiry *time.Time `json:"-"`
-	ResetToken        *string    `json:"-" gorm:"type:varchar(255)"`
-	ResetTokenExpiry  *time.Time `json:"-"`
+	// ResetToken        *string    `json:"-" gorm:"type:varchar(255)"`
+	// ResetTokenExpiry  *time.Time `json:"-"`
+	ResetOTP       *string    `json:"-" gorm:"column:reset_otp"`
+	ResetOTPExpiry *time.Time `json:"-" gorm:"column:reset_otp_expiry"`
 	gorm.Model
 }
 

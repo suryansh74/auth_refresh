@@ -18,8 +18,9 @@ func AuthRoutes(app *fiber.App) {
 	auth.Post("/login", authController.Login)
 	auth.Post("/refresh", authController.RefreshToken)
 	auth.Post("/forgot-password", authController.ForgotPassword)
+	auth.Post("/verify-otp", authController.VerifyOTP) // New endpoint
 	auth.Post("/reset-password", authController.ResetPassword)
-	auth.Get("/reset-password", authController.ResetPasswordGet) // Add this line
+	// auth.Get("/reset-password", authController.ResetPasswordGet) // Add this line
 	auth.Post("/logout", authController.Logout)
 	auth.Post("/logout-all", middleware.JWTMiddleware(), authController.LogoutAll)
 }
