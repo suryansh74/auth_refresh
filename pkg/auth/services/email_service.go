@@ -5,8 +5,9 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/suryansh74/auth_refresh/pkg/utils"
 	"github.com/suryansh74/auth_refresh/pkg/auth/models"
+	"github.com/suryansh74/auth_refresh/pkg/config"
+	"github.com/suryansh74/auth_refresh/pkg/utils"
 	"go.uber.org/zap"
 	"gopkg.in/gomail.v2"
 )
@@ -38,7 +39,9 @@ func NewEmailService() *EmailService {
 
 func (e *EmailService) SendVerificationEmail(user *models.User, token string) error {
 	// Change this line to use your API endpoint
-	verifyURL := fmt.Sprintf("http://localhost:3000/api/v1/auth/verify-email?token=%s&email=%s",
+	cfg := config.LoadConfig()
+	address := cfg.Server.Host + ":" + cfg.Server.Port
+	verifyURL := fmt.Sprintf("http://"+address+"/api/v1/auth/verify-email?token=%s&email=%s",
 		token, user.Email)
 
 	subject := "Verify Your Email Address"
@@ -60,7 +63,9 @@ func (e *EmailService) SendVerificationEmail(user *models.User, token string) er
 
 func (e *EmailService) SendPasswordResetEmail(user *models.User, token string) error {
 	// Change this to use your API endpoint
-	resetURL := fmt.Sprintf("http://localhost:3000/api/v1/auth/reset-password?token=%s&email=%s",
+	cfg := config.LoadConfig()
+	address := cfg.Server.Host + ":" + cfg.Server.Port
+	resetURL := fmt.Sprintf("http://"+address+"/api/v1/auth/reset-password?token=%s&email=%s",
 		token, user.Email)
 
 	subject := "Reset Your Password"
