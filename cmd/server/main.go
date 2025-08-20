@@ -5,7 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/joho/godotenv"
-	"github.com/suryansh74/auth_refresh/internal/utils"
+	"github.com/suryansh74/auth_refresh/pkg/utils"
 	"github.com/suryansh74/auth_refresh/pkg/auth"
 	"github.com/suryansh74/auth_refresh/pkg/config"
 )

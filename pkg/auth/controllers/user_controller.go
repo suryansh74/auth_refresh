@@ -4,7 +4,7 @@ import (
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/suryansh74/auth_refresh/internal/utils"
+	"github.com/suryansh74/auth_refresh/pkg/utils"
 	"github.com/suryansh74/auth_refresh/pkg/auth/models"
 	"github.com/suryansh74/auth_refresh/pkg/auth/validation"
 	"github.com/suryansh74/auth_refresh/pkg/config"

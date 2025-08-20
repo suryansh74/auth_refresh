@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/suryansh74/auth_refresh/internal/utils"
+	"github.com/suryansh74/auth_refresh/pkg/utils"
 	"github.com/suryansh74/auth_refresh/pkg/auth/models"
 	"go.uber.org/zap"
 )

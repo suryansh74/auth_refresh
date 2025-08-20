@@ -5,7 +5,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/suryansh74/auth_refresh/internal/utils"
+	"github.com/suryansh74/auth_refresh/pkg/utils"
 	"github.com/suryansh74/auth_refresh/pkg/auth/models"
 	"go.uber.org/zap"
 	"gopkg.in/gomail.v2"

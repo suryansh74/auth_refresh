@@ -1,7 +1,7 @@
 package services
 
 import (
-	"github.com/suryansh74/auth_refresh/internal/utils"
+	"github.com/suryansh74/auth_refresh/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
