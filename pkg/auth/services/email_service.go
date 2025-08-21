@@ -94,3 +94,20 @@ func (e *EmailService) sendEmail(to, subject, body string) error {
 	e.logger.Info("Email sent successfully", zap.String("to", to), zap.String("subject", subject))
 	return nil
 }
+
+func (e *EmailService) SendEmailVerificationOTP(user *models.User, otp string) error {
+	subject := "Email Verification OTP"
+	body := fmt.Sprintf(`
+        <h1>Verify Your Email Address</h1>
+        <p>Hello %s,</p>
+        <p>Welcome to Auth Refresh API! Please use the OTP below to verify your email address:</p>
+        <div style="background-color: #f8f9fa; padding: 20px; margin: 20px 0; text-align: center; border-radius: 5px;">
+            <h2 style="color: #007bff; font-size: 32px; margin: 0; letter-spacing: 5px;">%s</h2>
+        </div>
+        <p><strong>This OTP will expire in 10 minutes.</strong></p>
+        <p>If you didn't create an account, please ignore this email.</p>
+        <p>For security reasons, do not share this OTP with anyone.</p>
+    `, user.Name, otp)
+
+	return e.sendEmail(user.Email, subject, body)
+}

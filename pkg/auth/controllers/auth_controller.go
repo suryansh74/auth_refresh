@@ -66,9 +66,18 @@ func (ac *AuthController) Register(c *fiber.Ctx) error {
 		})
 	}
 
-	// Generate email verification token
-	verifyToken := ac.jwtService.GenerateRandomToken()
-	verifyExpiry := time.Now().Add(24 * time.Hour)
+	// Generate email verification OTP
+	verifyOTP, err := ac.otpService.GenerateOTP()
+	if err != nil {
+		logger.Error("Failed to generate verification OTP", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{
+			"success": false,
+			"error":   "Failed to generate verification OTP",
+		})
+	}
+
+	// Set OTP expiry (10 minutes)
+	verifyExpiry := time.Now().Add(5 * time.Minute)
 
 	// Create user
 	user := models.User{
@@ -76,7 +85,7 @@ func (ac *AuthController) Register(c *fiber.Ctx) error {
 		Email:             req.Email,
 		Password:          hashedPassword,
 		IsEmailVerified:   false,
-		EmailVerifyToken:  &verifyToken,
+		EmailVerifyOTP:    &verifyOTP,
 		EmailVerifyExpiry: &verifyExpiry,
 	}
 
@@ -88,9 +97,9 @@ func (ac *AuthController) Register(c *fiber.Ctx) error {
 		})
 	}
 
-	// Send verification email
-	if err := ac.emailService.SendVerificationEmail(&user, verifyToken); err != nil {
-		logger.Error("Failed to send verification email", zap.Error(err))
+	// Send verification OTP email
+	if err := ac.emailService.SendEmailVerificationOTP(&user, verifyOTP); err != nil {
+		logger.Error("Failed to send verification OTP email", zap.Error(err))
 		// Don't fail registration if email fails
 	}
 
@@ -98,7 +107,7 @@ func (ac *AuthController) Register(c *fiber.Ctx) error {
 
 	return c.Status(201).JSON(fiber.Map{
 		"success": true,
-		"message": "User registered successfully. Please check your email to verify your account.",
+		"message": "User registered successfully. Please check your email for the verification OTP.",
 		"data": fiber.Map{
 			"user_id": user.ID,
 			"email":   user.Email,
@@ -107,10 +116,12 @@ func (ac *AuthController) Register(c *fiber.Ctx) error {
 }
 
 // VerifyEmail - POST /auth/verify-email
+
+// VerifyEmail - POST /auth/verify-email (now uses OTP)
 func (ac *AuthController) VerifyEmail(c *fiber.Ctx) error {
 	logger := utils.GetLogger()
 
-	req, err := validation.ValidateEmailVerification(c)
+	req, err := validation.ValidateEmailVerificationOTP(c)
 	if err != nil {
 		logger.Warn("Email verification validation failed", zap.Error(err))
 		return c.Status(400).JSON(fiber.Map{
@@ -121,26 +132,35 @@ func (ac *AuthController) VerifyEmail(c *fiber.Ctx) error {
 	}
 
 	var user models.User
-	if err := config.DB.Where("email = ? AND email_verify_token = ?", req.Email, req.Token).First(&user).Error; err != nil {
-		logger.Warn("Invalid verification token", zap.String("email", req.Email))
+	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		logger.Warn("Email verification attempt with invalid email", zap.String("email", req.Email))
 		return c.Status(400).JSON(fiber.Map{
 			"success": false,
-			"error":   "Invalid verification token",
+			"error":   "Invalid email or OTP",
 		})
 	}
 
-	// Check if token is expired
-	if user.EmailVerifyExpiry.Before(time.Now()) {
-		logger.Warn("Verification token expired", zap.String("email", req.Email))
+	// Check if user has an OTP
+	if user.EmailVerifyOTP == nil {
+		logger.Warn("Email verification attempt without OTP", zap.String("email", req.Email))
 		return c.Status(400).JSON(fiber.Map{
 			"success": false,
-			"error":   "Verification token expired",
+			"error":   "No verification OTP found. Please request a new verification",
+		})
+	}
+
+	// Validate OTP
+	if !ac.otpService.ValidateOTP(*user.EmailVerifyOTP, req.OTP, user.EmailVerifyExpiry) {
+		logger.Warn("Invalid verification OTP attempt", zap.String("email", req.Email))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Invalid or expired OTP",
 		})
 	}
 
 	// Update user
 	user.IsEmailVerified = true
-	user.EmailVerifyToken = nil
+	user.EmailVerifyOTP = nil
 	user.EmailVerifyExpiry = nil
 
 	if err := config.DB.Save(&user).Error; err != nil {
@@ -156,6 +176,75 @@ func (ac *AuthController) VerifyEmail(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"success": true,
 		"message": "Email verified successfully. You can now login.",
+	})
+}
+
+func (ac *AuthController) ResendVerificationOTP(c *fiber.Ctx) error {
+	logger := utils.GetLogger()
+
+	req, err := validation.ValidateForgotPassword(c) // Reuse this validation as it only needs email
+	if err != nil {
+		logger.Warn("Resend verification OTP validation failed", zap.Error(err))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Validation failed",
+			"message": err.Error(),
+		})
+	}
+
+	var user models.User
+	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		// Don't reveal if email exists
+		return c.JSON(fiber.Map{
+			"success": true,
+			"message": "If the email exists and is not verified, a new OTP has been sent",
+		})
+	}
+
+	// Check if already verified
+	if user.IsEmailVerified {
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Email is already verified",
+		})
+	}
+
+	// Generate new verification OTP
+	verifyOTP, err := ac.otpService.GenerateOTP()
+	if err != nil {
+		logger.Error("Failed to generate verification OTP", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{
+			"success": false,
+			"error":   "Failed to process request",
+		})
+	}
+
+	// Set OTP expiry (10 minutes)
+	verifyExpiry := time.Now().Add(10 * time.Minute)
+	user.EmailVerifyOTP = &verifyOTP
+	user.EmailVerifyExpiry = &verifyExpiry
+
+	if err := config.DB.Save(&user).Error; err != nil {
+		logger.Error("Failed to save verification OTP", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{
+			"success": false,
+			"error":   "Failed to process request",
+		})
+	}
+
+	// Send verification OTP email
+	if err := ac.emailService.SendEmailVerificationOTP(&user, verifyOTP); err != nil {
+		logger.Error("Failed to send verification OTP email", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{
+			"success": false,
+			"error":   "Failed to send verification email",
+		})
+	}
+
+	logger.Info("Verification OTP resent", zap.String("email", user.Email))
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": "If the email exists and is not verified, a new OTP has been sent",
 	})
 }
 
@@ -591,59 +680,59 @@ func (ac *AuthController) Logout(c *fiber.Ctx) error {
 }
 
 // VerifyEmailGet - GET /auth/verify-email (for email links)
-func (ac *AuthController) VerifyEmailGet(c *fiber.Ctx) error {
-	logger := utils.GetLogger()
-
-	email := c.Query("email")
-	token := c.Query("token")
-
-	if email == "" || token == "" {
-		logger.Warn("Missing email or token in verification link")
-		return c.Status(400).JSON(fiber.Map{
-			"success": false,
-			"error":   "Missing email or token parameter",
-		})
-	}
-
-	var user models.User
-	if err := config.DB.Where("email = ? AND email_verify_token = ?", email, token).First(&user).Error; err != nil {
-		logger.Warn("Invalid verification token", zap.String("email", email))
-		return c.Status(400).JSON(fiber.Map{
-			"success": false,
-			"error":   "Invalid verification token",
-		})
-	}
-
-	// Check if token is expired
-	if user.EmailVerifyExpiry.Before(time.Now()) {
-		logger.Warn("Verification token expired", zap.String("email", email))
-		return c.Status(400).JSON(fiber.Map{
-			"success": false,
-			"error":   "Verification token expired",
-		})
-	}
-
-	// Update user
-	user.IsEmailVerified = true
-	user.EmailVerifyToken = nil
-	user.EmailVerifyExpiry = nil
-
-	if err := config.DB.Save(&user).Error; err != nil {
-		logger.Error("Failed to verify email", zap.Error(err))
-		return c.Status(500).JSON(fiber.Map{
-			"success": false,
-			"error":   "Failed to verify email",
-		})
-	}
-
-	logger.Info("Email verified successfully", zap.String("email", user.Email))
-
-	// Return success page or redirect to frontend
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Email verified successfully! You can now login.",
-	})
-}
+// func (ac *AuthController) VerifyEmailGet(c *fiber.Ctx) error {
+// 	logger := utils.GetLogger()
+//
+// 	email := c.Query("email")
+// 	token := c.Query("token")
+//
+// 	if email == "" || token == "" {
+// 		logger.Warn("Missing email or token in verification link")
+// 		return c.Status(400).JSON(fiber.Map{
+// 			"success": false,
+// 			"error":   "Missing email or token parameter",
+// 		})
+// 	}
+//
+// 	var user models.User
+// 	if err := config.DB.Where("email = ? AND email_verify_token = ?", email, token).First(&user).Error; err != nil {
+// 		logger.Warn("Invalid verification token", zap.String("email", email))
+// 		return c.Status(400).JSON(fiber.Map{
+// 			"success": false,
+// 			"error":   "Invalid verification token",
+// 		})
+// 	}
+//
+// 	// Check if token is expired
+// 	if user.EmailVerifyExpiry.Before(time.Now()) {
+// 		logger.Warn("Verification token expired", zap.String("email", email))
+// 		return c.Status(400).JSON(fiber.Map{
+// 			"success": false,
+// 			"error":   "Verification token expired",
+// 		})
+// 	}
+//
+// 	// Update user
+// 	user.IsEmailVerified = true
+// 	user.EmailVerifyToken = nil
+// 	user.EmailVerifyExpiry = nil
+//
+// 	if err := config.DB.Save(&user).Error; err != nil {
+// 		logger.Error("Failed to verify email", zap.Error(err))
+// 		return c.Status(500).JSON(fiber.Map{
+// 			"success": false,
+// 			"error":   "Failed to verify email",
+// 		})
+// 	}
+//
+// 	logger.Info("Email verified successfully", zap.String("email", user.Email))
+//
+// 	// Return success page or redirect to frontend
+// 	return c.JSON(fiber.Map{
+// 		"success": true,
+// 		"message": "Email verified successfully! You can now login.",
+// 	})
+// }
 
 // ResetPasswordGet - GET /auth/reset-password (for email links)
 func (ac *AuthController) ResetPasswordGet(c *fiber.Ctx) error {

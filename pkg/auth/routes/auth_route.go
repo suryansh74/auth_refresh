@@ -13,14 +13,13 @@ func AuthRoutes(app *fiber.App) {
 
 	// Public routes
 	auth.Post("/register", authController.Register)
-	auth.Post("/verify-email", authController.VerifyEmail)
-	auth.Get("/verify-email", authController.VerifyEmailGet)
+	auth.Post("/verify-email", authController.VerifyEmail)                      // Now uses OTP
+	auth.Post("/resend-verification-otp", authController.ResendVerificationOTP) // New endpoint
 	auth.Post("/login", authController.Login)
 	auth.Post("/refresh", authController.RefreshToken)
 	auth.Post("/forgot-password", authController.ForgotPassword)
-	auth.Post("/verify-otp", authController.VerifyOTP) // New endpoint
+	auth.Post("/verify-otp", authController.VerifyOTP) // For password reset
 	auth.Post("/reset-password", authController.ResetPassword)
-	// auth.Get("/reset-password", authController.ResetPasswordGet) // Add this line
 	auth.Post("/logout", authController.Logout)
 	auth.Post("/logout-all", middleware.JWTMiddleware(), authController.LogoutAll)
 }
