@@ -7,16 +7,16 @@ import (
 )
 
 type User struct {
-	ID              uint   `json:"id" gorm:"primaryKey"`
-	Name            string `json:"name" gorm:"not null"`
-	Email           string `json:"email" gorm:"uniqueIndex;not null"`
-	Password        string `json:"-" gorm:"not null"`
-	IsEmailVerified bool   `json:"is_email_verified" gorm:"default:false"`
-	// Replace token fields with OTP fields
+	ID                uint       `json:"id" gorm:"primaryKey"`
+	Name              string     `json:"name" gorm:"not null"`
+	Email             string     `json:"email" gorm:"uniqueIndex;not null"`
+	Password          string     `json:"-" gorm:"not null"`
+	IsEmailVerified   bool       `json:"is_email_verified" gorm:"default:false"`
 	EmailVerifyOTP    *string    `json:"-" gorm:"column:email_verify_otp"`
 	EmailVerifyExpiry *time.Time `json:"-" gorm:"column:email_verify_expiry"`
 	ResetOTP          *string    `json:"-" gorm:"column:reset_otp"`
 	ResetOTPExpiry    *time.Time `json:"-" gorm:"column:reset_otp_expiry"`
+	ResetOTPVerified  *time.Time `json:"-" gorm:"column:reset_otp_verified"` // New field
 	gorm.Model
 }
 

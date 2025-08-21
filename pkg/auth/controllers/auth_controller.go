@@ -445,10 +445,12 @@ func (ac *AuthController) ForgotPassword(c *fiber.Ctx) error {
 
 	var user models.User
 	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
-		// Don't reveal if email exists
-		return c.JSON(fiber.Map{
-			"success": true,
-			"message": "If the email exists, an OTP has been sent to your email address",
+		// Return explicit error for non-existent email
+		logger.Warn("Forgot password attempt with non-existent email", zap.String("email", req.Email))
+		return c.Status(404).JSON(fiber.Map{
+			"success": false,
+			"error":   "Email not found",
+			"message": "No account found with this email address",
 		})
 	}
 
@@ -487,7 +489,10 @@ func (ac *AuthController) ForgotPassword(c *fiber.Ctx) error {
 	logger.Info("Password reset OTP sent", zap.String("email", user.Email))
 	return c.JSON(fiber.Map{
 		"success": true,
-		"message": "If the email exists, an OTP has been sent to your email address",
+		"message": "OTP has been sent to your email address",
+		"data": fiber.Map{
+			"email": user.Email,
+		},
 	})
 }
 
@@ -545,7 +550,7 @@ func (ac *AuthController) VerifyOTP(c *fiber.Ctx) error {
 func (ac *AuthController) ResetPassword(c *fiber.Ctx) error {
 	logger := utils.GetLogger()
 
-	req, err := validation.ValidateResetPasswordWithOTP(c)
+	req, err := validation.ValidateResetPasswordOnly(c) // Use new validation
 	if err != nil {
 		logger.Warn("Reset password validation failed", zap.Error(err))
 		return c.Status(400).JSON(fiber.Map{
@@ -558,27 +563,30 @@ func (ac *AuthController) ResetPassword(c *fiber.Ctx) error {
 	var user models.User
 	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
 		logger.Warn("Password reset attempt with invalid email", zap.String("email", req.Email))
-		return c.Status(400).JSON(fiber.Map{
+		return c.Status(404).JSON(fiber.Map{
 			"success": false,
-			"error":   "Invalid request",
+			"error":   "Email not found",
+			"message": "No account found with this email address",
 		})
 	}
 
-	// Check if user has an OTP
-	if user.ResetOTP == nil {
-		logger.Warn("Password reset attempt without OTP", zap.String("email", req.Email))
+	// Check if OTP was recently verified (within 5 minutes)
+	if user.ResetOTPVerified == nil {
+		logger.Warn("Password reset attempt without OTP verification", zap.String("email", req.Email))
 		return c.Status(400).JSON(fiber.Map{
 			"success": false,
-			"error":   "No OTP found. Please request a new password reset",
+			"error":   "OTP not verified",
+			"message": "Please verify your OTP first",
 		})
 	}
 
-	// Validate OTP again
-	if !ac.otpService.ValidateOTP(*user.ResetOTP, req.OTP, user.ResetOTPExpiry) {
-		logger.Warn("Password reset with invalid OTP", zap.String("email", req.Email))
+	// Check if OTP verification is still valid (5 minutes window)
+	if user.ResetOTPVerified.Before(time.Now().Add(-5 * time.Minute)) {
+		logger.Warn("Password reset attempt with expired OTP verification", zap.String("email", req.Email))
 		return c.Status(400).JSON(fiber.Map{
 			"success": false,
-			"error":   "Invalid or expired OTP",
+			"error":   "OTP verification expired",
+			"message": "Please verify your OTP again",
 		})
 	}
 
@@ -592,10 +600,11 @@ func (ac *AuthController) ResetPassword(c *fiber.Ctx) error {
 		})
 	}
 
-	// Update user
+	// Update user - clear all reset-related fields
 	user.Password = hashedPassword
 	user.ResetOTP = nil
 	user.ResetOTPExpiry = nil
+	user.ResetOTPVerified = nil
 
 	if err := config.DB.Save(&user).Error; err != nil {
 		logger.Error("Failed to update password", zap.Error(err))
@@ -611,7 +620,7 @@ func (ac *AuthController) ResetPassword(c *fiber.Ctx) error {
 	logger.Info("Password reset successfully", zap.String("email", user.Email))
 	return c.JSON(fiber.Map{
 		"success": true,
-		"message": "Password reset successfully",
+		"message": "Password reset successfully. Please login with your new password",
 	})
 }
 
@@ -809,5 +818,72 @@ func (ac *AuthController) LogoutAll(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"success": true,
 		"message": fmt.Sprintf("Logged out from all devices. %d sessions terminated.", result.RowsAffected),
+	})
+}
+
+// VerifyPasswordResetOTP - POST /auth/verify-password-reset-otp
+func (ac *AuthController) VerifyPasswordResetOTP(c *fiber.Ctx) error {
+	logger := utils.GetLogger()
+
+	req, err := validation.ValidateVerifyOTP(c)
+	if err != nil {
+		logger.Warn("Verify password reset OTP validation failed", zap.Error(err))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Validation failed",
+			"message": err.Error(),
+		})
+	}
+
+	var user models.User
+	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		logger.Warn("Password reset OTP verification attempt with invalid email", zap.String("email", req.Email))
+		return c.Status(404).JSON(fiber.Map{
+			"success": false,
+			"error":   "Email not found",
+			"message": "No account found with this email address",
+		})
+	}
+
+	// Check if user has an OTP
+	if user.ResetOTP == nil {
+		logger.Warn("Password reset OTP verification attempt without OTP", zap.String("email", req.Email))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "No OTP found",
+			"message": "Please request a new password reset",
+		})
+	}
+
+	// Validate OTP
+	if !ac.otpService.ValidateOTP(*user.ResetOTP, req.OTP, user.ResetOTPExpiry) {
+		logger.Warn("Invalid password reset OTP attempt", zap.String("email", req.Email))
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Invalid or expired OTP",
+			"message": "Please check your OTP or request a new one",
+		})
+	}
+
+	// Mark OTP as verified (valid for 5 minutes)
+	verifiedTime := time.Now()
+	user.ResetOTPVerified = &verifiedTime
+
+	if err := config.DB.Save(&user).Error; err != nil {
+		logger.Error("Failed to mark OTP as verified", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{
+			"success": false,
+			"error":   "Failed to process request",
+		})
+	}
+
+	logger.Info("Password reset OTP verified successfully", zap.String("email", user.Email))
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": "OTP verified successfully. You can now reset your password",
+		"data": fiber.Map{
+			"email":     user.Email,
+			"otp_valid": true,
+		},
 	})
 }

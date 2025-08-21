@@ -225,3 +225,25 @@ func ValidateEmailVerificationOTP(c *fiber.Ctx) (*EmailVerificationOTPRequest, e
 
 	return &req, nil
 }
+
+type ResetPasswordOnlyRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+func ValidateResetPasswordOnly(c *fiber.Ctx) (*ResetPasswordOnlyRequest, error) {
+	var req ResetPasswordOnlyRequest
+
+	if err := c.BodyParser(&req); err != nil {
+		return nil, errors.New("invalid JSON format")
+	}
+
+	req.Email = strings.TrimSpace(req.Email)
+	req.Password = strings.TrimSpace(req.Password)
+
+	if err := validate.Struct(&req); err != nil {
+		return nil, errors.New(formatValidationErrors(err))
+	}
+
+	return &req, nil
+}
